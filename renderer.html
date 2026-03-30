@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;">
+<title>DOOM-CLAUDE Monitor</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Press+Start+2P&display=swap');
+
+:root {
+  --bg: #1a0a00; --panel: #2d1500; --border: #8b3a00;
+  --red: #cc0000; --darkred: #880000; --orange: #ff6600;
+  --yellow: #ffaa00; --green: #00cc44;
+  --light: #ffcc88; --text: #ff8800; --dim: #664400; --gray: #aaaaaa;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%; background: var(--bg); color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.scanlines {
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px);
+  pointer-events: none; z-index: 999;
+}
+
+.app {
+  display: flex; flex-direction: column; height: 100vh;
+  background: var(--panel); border: 2px solid var(--border);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+}
+
+/* ── titlebar ── */
+.titlebar {
+  background: var(--red); padding: 12px 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 2px solid var(--darkred);
+  -webkit-app-region: drag; flex-shrink: 0;
+}
+.titlebar.mac { padding-left: 76px; }
+.titlebar-text { font-family: 'Press Start 2P', monospace; font-size: 7px; color: #fff; letter-spacing: 1px; text-shadow: 1px 1px 0 #440000; -webkit-app-region: drag; }
+
+
+/* ── HUD ── */
+.hud {
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; background: #0d0400;
+  border-bottom: 2px solid var(--border); padding: 10px 14px; gap: 6px;
+  flex-shrink: 0;
+}
+.hud-stat { display: flex; flex-direction: column; gap: 3px; }
+.hud-stat.right { text-align: right; align-items: flex-end; }
+.hud-label { font-family: 'Press Start 2P', monospace; font-size: 5px; color: var(--dim); letter-spacing: 1px; }
+.hud-value { font-family: 'Press Start 2P', monospace; font-size: 13px; color: var(--red); line-height: 1; }
+.hud-value.green  { color: var(--green); }
+.hud-value.yellow { color: var(--yellow); }
+.hud-value.orange { color: var(--orange); }
+.hud-sub { font-size: 8px; color: var(--dim); margin-top: 2px; font-family: 'Share Tech Mono', monospace; }
+
+#doomface {
+  width: 88px; height: 88px; image-rendering: pixelated; cursor: pointer;
+  border: 2px solid var(--border); background: #000; display: block;
+}
+#doomface:hover { border-color: var(--orange); }
+#doomface:active { transform: scale(0.96); }
+
+/* ── bar ── */
+.bar-section { padding: 9px 14px; border-bottom: 1px solid #330f00; flex-shrink: 0; }
+.bar-label { font-family: 'Press Start 2P', monospace; font-size: 5px; color: var(--dim); margin-bottom: 5px; letter-spacing: 1px; }
+.bar-track { height: 13px; background: #000; border: 1px solid #440800; position: relative; overflow: hidden; }
+.bar-fill { height: 100%; transition: width 0.7s cubic-bezier(.25,.46,.45,.94), background 0.6s; position: relative; }
+.bar-fill::after { content:''; position:absolute; top:0;left:0;right:0; height:3px; background:rgba(255,255,255,0.1); }
+.h0 { background: var(--green); }
+.h1 { background: #88cc00; }
+.h2 { background: var(--yellow); }
+.h3 { background: var(--orange); }
+.h4 { background: var(--red); animation: pulsered .8s infinite; }
+@keyframes pulsered { 0%,100%{ box-shadow: 0 0 6px rgba(204,0,0,.6); } 50%{ box-shadow: 0 0 18px rgba(255,0,0,1); } }
+.bar-segs { position:absolute; top:0; left:0; right:0; bottom:0; display:flex; }
+.seg { flex:1; border-right:1px solid rgba(0,0,0,0.25); }
+.seg:last-child { border-right:none; }
+
+/* ── stats ── */
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #330f00; border-bottom: 2px solid var(--border); flex-shrink: 0; }
+.stat-cell { background: #110500; padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; }
+.stat-cell-label { font-family: 'Press Start 2P', monospace; font-size: 4px; color: var(--dim); letter-spacing: 1px; }
+.stat-cell-value { font-family: 'Share Tech Mono', monospace; font-size: 15px; color: var(--light); font-weight: bold; }
+.stat-cell-sub { font-size: 9px; color: var(--text); }
+
+/* ── scrollable body ── */
+.scroll-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+
+/* ── breakdown table ── */
+.breakdown { padding: 9px 14px; border-bottom: 1px solid #330f00; }
+.section-title { font-family: 'Press Start 2P', monospace; font-size: 5px; color: var(--dim); margin-bottom: 6px; letter-spacing: 1px; }
+.breakdown-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.breakdown-table th { font-family: 'Press Start 2P', monospace; font-size: 4px; color: var(--dim); text-align: left; padding: 2px 5px 4px; border-bottom: 1px solid #330f00; letter-spacing: 1px; }
+.breakdown-table td { padding: 3px 5px; color: var(--gray); border-bottom: 1px solid #1a0800; }
+.breakdown-table tr:last-child td { border-bottom: none; }
+td.name { color: var(--light); }
+td.pos  { color: var(--green); }
+td.warn { color: var(--yellow); }
+td.crit { color: var(--red); }
+.no-data { color: var(--dim); font-size: 10px; padding: 8px 0; text-align: center; }
+
+/* ── log ── */
+.log-section { padding: 9px 14px; border-bottom: 1px solid #330f00; flex: 1; display: flex; flex-direction: column; min-height: 80px; overflow: hidden; }
+.log-entries { flex: 1; overflow-y: auto; font-size: 10px; color: var(--gray); line-height: 1.55; scrollbar-width: thin; scrollbar-color: var(--border) #000; }
+.log-entries::-webkit-scrollbar { width: 3px; }
+.log-entries::-webkit-scrollbar-thumb { background: var(--border); }
+.le { color: #778866; }
+.le.warn { color: var(--yellow); } .le.danger { color: var(--red); } .le.good { color: var(--green); }
+.le .ts { color: #443322; }
+
+/* ── config panels ── */
+.config-panel { padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; border-bottom: 1px solid #330f00; }
+.cfg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.cfg-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.field-group { display: flex; flex-direction: column; gap: 3px; }
+.field-label { font-family: 'Press Start 2P', monospace; font-size: 4px; color: var(--dim); letter-spacing: 1px; }
+input[type="text"], input[type="number"], input[type="password"], select {
+  background: #000; border: 1px solid var(--border); color: var(--light);
+  font-family: 'Share Tech Mono', monospace; font-size: 11px; padding: 5px 6px;
+  width: 100%; outline: none; appearance: none;
+}
+input:focus, select:focus { border-color: var(--orange); box-shadow: 0 0 5px rgba(255,102,0,0.25); }
+select option { background: #1a0a00; }
+
+/* ── buttons ── */
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+button {
+  background: #330800; border: 2px solid var(--border); color: var(--orange);
+  font-family: 'Press Start 2P', monospace; font-size: 6px; padding: 8px 5px;
+  cursor: pointer; letter-spacing: 1px; transition: all 0.1s; width: 100%;
+}
+button:hover { background: #661100; border-color: var(--orange); color: #fff; box-shadow: 0 0 8px rgba(255,102,0,0.3); }
+button:active { transform: scale(0.97); }
+button.primary { background: var(--darkred); border-color: var(--red); color: #fff; }
+button.primary:hover { background: var(--red); }
+button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ── poll indicator ── */
+.poll-bar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 14px;
+  background: #0d0400; border-bottom: 1px solid #330f00;
+  font-family: 'Press Start 2P', monospace; font-size: 5px; color: var(--dim); letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.poll-led { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+.poll-led.on    { background: var(--green); box-shadow: 0 0 4px var(--green); animation: blink 1.2s infinite; }
+.poll-led.error { background: var(--red); box-shadow: 0 0 4px var(--red); }
+@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.15;} }
+
+/* ── status bar ── */
+.statusbar {
+  background: #0a0200; border-top: 1px solid #330f00;
+  padding: 4px 14px; display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0;
+}
+.status-text { font-family: 'Press Start 2P', monospace; font-size: 4px; color: var(--dim); letter-spacing: 1px; }
+.status-led { width:5px; height:5px; border-radius:50%; background:var(--green); box-shadow:0 0 3px var(--green); animation:blink 1.4s infinite; }
+
+/* ── animations ── */
+@keyframes faceflash { 0%{filter:brightness(1);} 20%{filter:brightness(2.5) saturate(0);} 100%{filter:brightness(1);} }
+.face-flash { animation: faceflash .25s ease-out; }
+@keyframes appflicker { 0%,60%,100%{opacity:1;} 30%,80%{opacity:.82;} }
+.flicker { animation: appflicker .2s; }
+
+.hidden { display: none !important; }
+
+/* ── workspace chips ── */
+.ws-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.ws-chip {
+  font-family: 'Share Tech Mono', monospace; font-size: 9px;
+  padding: 2px 6px; border: 1px solid var(--border); color: var(--dim); cursor: pointer;
+}
+.ws-chip.selected { border-color: var(--orange); color: var(--orange); background: #1f0800; }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="app" id="app">
+
+  <!-- titlebar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-text">&#9658; CLAUDE-DOOM MONITOR</div>
+    <div class="titlebar-text" id="title-right">v2.0</div>
+  </div>
+
+  <!-- HUD -->
+  <div class="hud">
+    <div class="hud-stat">
+      <div class="hud-label">TOK / SESSION</div>
+      <div class="hud-value" id="hud-tokens">&#8212;</div>
+      <div class="hud-sub"  id="hud-calls">&#8212; calls</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;">
+      <img id="doomface" src="./assets/sprite_0.png" alt="DOOM Guy" draggable="false">
+    </div>
+    <div class="hud-stat right">
+      <div class="hud-label">$ / SESSION</div>
+      <div class="hud-value green" id="hud-cost">&#8212;</div>
+      <div class="hud-sub" id="hud-budget-pct">&#8212; of budget</div>
+    </div>
+  </div>
+
+  <!-- budget bar -->
+  <div class="bar-section">
+    <div class="bar-label" id="bar-label">SESSION BUDGET CONSUMED</div>
+    <div class="bar-track">
+      <div class="bar-fill h0" id="budget-bar" style="width:0%"></div>
+      <div class="bar-segs">
+        <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div>
+        <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- stats row -->
+  <div class="stats-grid">
+    <div class="stat-cell">
+      <div class="stat-cell-label">SESSION $</div>
+      <div class="stat-cell-value" id="stat-today">$0.00</div>
+      <div class="stat-cell-sub">session</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-cell-label">INPUT TOK</div>
+      <div class="stat-cell-value" id="stat-input">0</div>
+      <div class="stat-cell-sub">session</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-cell-label">OUTPUT TOK</div>
+      <div class="stat-cell-value" id="stat-output">0</div>
+      <div class="stat-cell-sub">session</div>
+    </div>
+  </div>
+
+  <!-- scrollable area -->
+  <div class="scroll-body">
+
+    <!-- model breakdown -->
+    <div class="breakdown">
+      <div class="section-title">&#9658; SPEND BY MODEL (SESSION)</div>
+      <table class="breakdown-table">
+        <thead><tr>
+          <th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>CACHE R</th><th>$ COST</th>
+        </tr></thead>
+        <tbody id="model-breakdown">
+          <tr><td colspan="5" class="no-data">awaiting data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- log -->
+    <div class="log-section">
+      <div class="section-title">&#9658; COMBAT LOG</div>
+      <div class="log-entries" id="log"></div>
+    </div>
+
+    <!-- LIVE panel -->
+    <div id="panel-live">
+      <div class="config-panel">
+        <div class="field-group">
+          <div class="field-label">CLAUDE CODE SESSION</div>
+          <select id="session-select">
+            <option value="">-- scanning... --</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <div class="field-group">
+            <div class="field-label">BUDGET ($)</div>
+            <input type="number" id="live-budget" value="10.00" min="0.01" step="1.00">
+          </div>
+          <div class="field-group">
+            <div class="field-label">REFRESH (SEC)</div>
+            <input type="number" id="poll-interval" value="10" min="1" max="60" step="1">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="primary" id="btn-start" onclick="startPolling()">&#9658; START</button>
+          <button id="btn-stop" onclick="stopPolling()" disabled>&#9632; STOP</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /scroll-body -->
+
+  <!-- poll status bar -->
+  <div class="poll-bar" id="poll-bar">
+    <div class="poll-led" id="poll-led"></div>
+    <span id="poll-status">NOT POLLING</span>
+    <span style="margin-left:auto;color:var(--dim)" id="poll-next"></span>
+  </div>
+
+  <!-- statusbar -->
+  <div class="statusbar">
+    <div class="status-text" id="status-text">STANDING BY &#8212; NO DEMONS DETECTED</div>
+    <div class="status-led"></div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── pricing ──────────────────────────────────────────────────────────────────
+const PRICING = {
+  'claude-opus-4-6':   { input:15.00, output:75.00, cacheRead:1.50,  cacheWrite:18.75 },
+  'claude-sonnet-4-6': { input:3.00,  output:15.00, cacheRead:0.30,  cacheWrite:3.75  },
+  'claude-haiku-4-5':  { input:0.80,  output:4.00,  cacheRead:0.08,  cacheWrite:1.00  },
+  'claude-sonnet-3-7': { input:3.00,  output:15.00, cacheRead:0.30,  cacheWrite:3.75  },
+  'claude-haiku-3':    { input:0.25,  output:1.25,  cacheRead:0.03,  cacheWrite:0.30  },
+};
+function priceFor(model) {
+  for (const [k,v] of Object.entries(PRICING)) {
+    if (model === k || model.startsWith(k) || k.startsWith(model)) return v;
+  }
+  return PRICING['claude-sonnet-4-6'];
+}
+
+// ── state ─────────────────────────────────────────────────────────────────────
+const S = {
+  polling: false, pollTimer: null, cdTimer: null, cdVal: 0,
+  lastSpriteIdx: -1,
+};
+
+const SPRITES = [
+  './assets/sprite_0.png',
+  './assets/sprite_1.png',
+  './assets/sprite_2.png',
+  './assets/sprite_3.png',
+  './assets/sprite_4.png',
+];
+
+// ── init: restore settings, apply platform class, load sessions ───────────────
+(async () => {
+  try {
+    if (window.electronAPI?.platform === 'darwin') {
+      document.getElementById('titlebar').classList.add('mac');
+    }
+    if (!window.electronAPI) {
+      addLog('electronAPI not found — preload failed', 'danger'); return;
+    }
+    const budget   = await window.electronAPI.getSettings('budget', 10);
+    const interval = await window.electronAPI.getSettings('pollInterval', 10);
+    if (budget)   document.getElementById('live-budget').value = budget;
+    if (interval) document.getElementById('poll-interval').value = interval;
+    await loadSessions();
+    startPolling();
+  } catch(e) { addLog('INIT ERROR: ' + e.message, 'danger'); }
+})();
+
+// ── session list ──────────────────────────────────────────────────────────────
+async function loadSessions() {
+  if (!window.electronAPI) return;
+  try {
+    const sessions = await window.electronAPI.listSessions();
+    addLog(`found ${sessions.length} session(s)`, '');
+    const sel = document.getElementById('session-select');
+    if (!sessions.length) {
+      sel.innerHTML = '<option value="">no Claude Code sessions found</option>';
+      return;
+    }
+    sel.innerHTML = sessions.map(s => {
+      const time = new Date(s.startedAt).toLocaleTimeString('en-US', {hour12: false, hour:'2-digit', minute:'2-digit'});
+      return `<option value="${s.jsonlPath}">${s.displayDir} — ${time}</option>`;
+    }).join('');
+  } catch(e) { addLog('SESSION SCAN ERROR: ' + e.message, 'danger'); }
+}
+
+// ── sprite ────────────────────────────────────────────────────────────────────
+function spriteIdx(pct) {
+  if (pct<20) return 0; if (pct<40) return 1;
+  if (pct<60) return 2; if (pct<80) return 3; return 4;
+}
+function updateFace(pct) {
+  const idx = spriteIdx(pct);
+  const img = document.getElementById('doomface');
+  if (idx !== S.lastSpriteIdx) {
+    img.src = SPRITES[idx];
+    if (idx > S.lastSpriteIdx && S.lastSpriteIdx >= 0) {
+      img.classList.remove('face-flash'); void img.offsetWidth; img.classList.add('face-flash');
+      setTimeout(()=>img.classList.remove('face-flash'), 300);
+      const app = document.getElementById('app');
+      app.classList.add('flicker'); setTimeout(()=>app.classList.remove('flicker'), 250);
+    }
+    S.lastSpriteIdx = idx;
+  }
+}
+
+// ── formatting ────────────────────────────────────────────────────────────────
+const fmtTok  = n => n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(Math.round(n));
+const fmtCost = (n, dec=2) => '$'+n.toFixed(dec);
+
+// ── log ───────────────────────────────────────────────────────────────────────
+function addLog(msg, type='') {
+  const log = document.getElementById('log');
+  const ts  = new Date().toLocaleTimeString('en-US',{hour12:false});
+  const el  = document.createElement('div');
+  el.className = 'le'+(type?' '+type:'');
+  el.innerHTML = `<span class="ts">[${ts}]</span> ${msg}`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── display update ────────────────────────────────────────────────────────────
+function updateDisplay({ todayCost, todayInput, todayOutput, monthCost, budget, modelRows }) {
+  const pct = budget>0 ? Math.min(100, monthCost/budget*100) : 0;
+
+  document.getElementById('hud-tokens').textContent    = fmtTok(todayInput+todayOutput);
+  document.getElementById('hud-cost').textContent      = fmtCost(monthCost);
+  document.getElementById('hud-budget-pct').textContent= pct.toFixed(1)+'% of budget';
+  document.getElementById('hud-cost').className        = 'hud-value '+(pct<25?'green':pct<50?'yellow':pct<75?'orange':'');
+  document.getElementById('stat-today').textContent    = fmtCost(todayCost, 4);
+  document.getElementById('stat-input').textContent    = fmtTok(todayInput);
+  document.getElementById('stat-output').textContent   = fmtTok(todayOutput);
+
+  const bar = document.getElementById('budget-bar');
+  bar.style.width  = pct+'%';
+  bar.className    = 'bar-fill '+(pct<20?'h0':pct<40?'h1':pct<60?'h2':pct<80?'h3':'h4');
+
+  const pctStr = pct.toFixed(1) + '%';
+  const msgs = [[0,20,'STANDING BY \u2014 SYSTEM NOMINAL'],[20,45,'TAKING FIRE \u2014 BUDGET '+pctStr+' USED'],
+    [45,65,'UNDER ATTACK \u2014 '+pctStr+' CONSUMED'],[65,85,'CRITICAL \u2014 '+pctStr+' BUDGET SPENT'],[85,101,'FLATLINE \u2014 BUDGET EXCEEDED ('+pctStr+')']];
+  for (const [lo,hi,msg] of msgs) if (pct>=lo&&pct<hi) { document.getElementById('status-text').textContent=msg; break; }
+
+  renderBreakdown(modelRows);
+  updateFace(pct);
+}
+
+function renderBreakdown(rows) {
+  const tbody = document.getElementById('model-breakdown');
+  if (!rows||!rows.length) { tbody.innerHTML='<tr><td colspan="5" class="no-data">no data yet</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => {
+    const cls = r.cost>50?'crit':r.cost>10?'warn':'pos';
+    const m   = r.model.replace('claude-','').replace(/-2024.*$/,'').replace(/-2025.*$/,'');
+    return `<tr>
+      <td class="name">${m}</td>
+      <td>${fmtTok(r.input)}</td>
+      <td>${fmtTok(r.output)}</td>
+      <td>${fmtTok(r.cacheRead)}</td>
+      <td class="cost ${cls}">${fmtCost(r.cost,4)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── LIVE: read Claude Code session JSONL ──────────────────────────────────────
+async function doPoll() {
+  const jsonlPath = document.getElementById('session-select').value;
+  if (!jsonlPath) return;
+  const budget = parseFloat(document.getElementById('live-budget').value) || 10;
+
+  document.getElementById('poll-led').className    = 'poll-led on';
+  document.getElementById('poll-status').textContent = 'READING...';
+
+  try {
+    await window.electronAPI.setSettings('budget', budget);
+    const { byModel, totalMessages } = await window.electronAPI.readUsage(jsonlPath);
+
+    let totalInput = 0, totalOutput = 0, totalCost = 0;
+    const modelRows = [];
+
+    for (const [model, u] of Object.entries(byModel)) {
+      const p    = priceFor(model);
+      const cost = (u.input/1e6)*p.input + (u.output/1e6)*p.output +
+                   (u.cacheRead/1e6)*p.cacheRead + (u.cacheWrite/1e6)*p.cacheWrite;
+      totalInput  += u.input;
+      totalOutput += u.output;
+      totalCost   += cost;
+      modelRows.push({ model, input: u.input, output: u.output, cacheRead: u.cacheRead, cost });
+    }
+    modelRows.sort((a, b) => b.cost - a.cost);
+
+    updateDisplay({ todayCost: totalCost, todayInput: totalInput, todayOutput: totalOutput,
+                    monthCost: totalCost, budget, modelRows });
+
+    document.getElementById('hud-calls').textContent = totalMessages + ' messages';
+
+    const pct = budget > 0 ? totalCost / budget * 100 : 0;
+    addLog(`SESSION \u2014 in:${fmtTok(totalInput)} out:${fmtTok(totalOutput)} cost:${fmtCost(totalCost,4)} (${pct.toFixed(1)}%)`,
+      pct > 70 ? 'danger' : pct > 40 ? 'warn' : 'good');
+
+    document.getElementById('poll-status').textContent = 'LIVE \u2014 ' +
+      new Date().toLocaleTimeString('en-US', {hour12: false});
+    document.getElementById('poll-led').className = 'poll-led on';
+  } catch (e) {
+    addLog('ERROR: ' + e.message, 'danger');
+    document.getElementById('poll-status').textContent = 'ERROR';
+    document.getElementById('poll-led').className = 'poll-led error';
+  }
+}
+
+function startPolling() {
+  const jsonlPath = document.getElementById('session-select').value;
+  if (!jsonlPath) {
+    addLog('NO SESSION SELECTED \u2014 PICK A CLAUDE CODE SESSION', 'danger'); return;
+  }
+  S.polling = true;
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled  = false;
+  const sec = parseInt(document.getElementById('poll-interval').value) || 10;
+  window.electronAPI.setSettings('pollInterval', sec);
+  addLog('TRACKING SESSION \u2014 CLAUDE CODE LINKED', 'good');
+  doPoll();
+  S.cdVal = sec;
+  S.pollTimer = setInterval(doPoll, sec * 1000);
+  S.cdTimer   = setInterval(() => {
+    S.cdVal--; if (S.cdVal <= 0) S.cdVal = sec;
+    document.getElementById('poll-next').textContent = 'NEXT: ' + S.cdVal + 's';
+  }, 1000);
+}
+
+function stopPolling() {
+  S.polling = false;
+  clearInterval(S.pollTimer); clearInterval(S.cdTimer);
+  S.pollTimer=null; S.cdTimer=null;
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled  = true;
+  document.getElementById('poll-led').className = 'poll-led';
+  document.getElementById('poll-status').textContent = 'STOPPED';
+  document.getElementById('poll-next').textContent   = '';
+  addLog('POLLING STOPPED', 'warn');
+}
+
+// ── taunt ─────────────────────────────────────────────────────────────────────
+const TAUNTS = ['BRING IT ON.','IS THAT ALL YOU GOT?','RIP AND TEAR.',
+  'TOKENS? PATHETIC.','I EAT CONTEXT WINDOWS FOR BREAKFAST.',
+  'YOUR BUDGET IS MY WARMUP.','MORE. ALWAYS MORE.',
+  'GPT COULD NEVER.','RATE LIMIT THIS.'];
+document.getElementById('doomface').addEventListener('click', () => {
+  addLog(TAUNTS[Math.floor(Math.random()*TAUNTS.length)],'good');
+  const img = document.getElementById('doomface');
+  const savedSrc = img.src;
+  img.src = SPRITES[1]; // grinning face
+  img.classList.remove('face-flash'); void img.offsetWidth; img.classList.add('face-flash');
+  setTimeout(() => {
+    img.classList.remove('face-flash');
+    img.src = savedSrc;
+  }, 500);
+});
+
+// ── auto-taunt ────────────────────────────────────────────────────────────────
+function scheduleAutoTaunt() {
+  const delay = (5 + Math.random() * 25) * 1000;
+  setTimeout(() => {
+    addLog(TAUNTS[Math.floor(Math.random() * TAUNTS.length)], 'good');
+    scheduleAutoTaunt();
+  }, delay);
+}
+scheduleAutoTaunt();
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+addLog('DOOM-CLAUDE MONITOR v2.0 ONLINE. UAC APPROVED.', 'good');
+addLog('Select a Claude Code session and hit START to track.', '');
+</script>
+</body>
+</html>
