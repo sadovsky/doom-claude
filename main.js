@@ -36,7 +36,6 @@ function createWindow() {
   });
 
   win.loadFile('renderer.html');
-  win.webContents.openDevTools({ mode: 'detach' });
 
   // Restore saved position
   const bounds = Store.get('windowBounds', null);
@@ -74,8 +73,6 @@ const claudeDir = path.join(os.homedir(), '.claude');
 ipcMain.handle('claude:listSessions', () => {
   const projectsDir = path.join(claudeDir, 'projects');
   const homeEncoded = os.homedir().replace(/\//g, '-');
-  console.log('[listSessions] projectsDir:', projectsDir);
-  console.log('[listSessions] homeEncoded:', homeEncoded);
 
   function displayName(proj) {
     const rel   = proj.startsWith(homeEncoded) ? proj.slice(homeEncoded.length) : proj;
@@ -86,13 +83,10 @@ ipcMain.handle('claude:listSessions', () => {
 
   const results = [];
   try {
-    const projs = fs.readdirSync(projectsDir);
-    console.log('[listSessions] projects found:', projs.length);
-    for (const proj of projs) {
+    for (const proj of fs.readdirSync(projectsDir)) {
       const projDir = path.join(projectsDir, proj);
       try {
-        const files = fs.readdirSync(projDir).filter(f => f.endsWith('.jsonl'));
-        for (const file of files) {
+        for (const file of fs.readdirSync(projDir).filter(f => f.endsWith('.jsonl'))) {
           const jsonlPath = path.join(projDir, file);
           const stat      = fs.statSync(jsonlPath);
           if (stat.size === 0) continue;
@@ -103,10 +97,9 @@ ipcMain.handle('claude:listSessions', () => {
             jsonlPath,
           });
         }
-      } catch(e) { console.log('[listSessions] projDir error:', e.message); }
+      } catch {}
     }
-  } catch(e) { console.log('[listSessions] outer error:', e.message); }
-  console.log('[listSessions] returning', results.length, 'sessions');
+  } catch {}
   return results.sort((a, b) => b.startedAt - a.startedAt).slice(0, 20);
 });
 
